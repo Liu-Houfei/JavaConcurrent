@@ -8,8 +8,8 @@ import java.text.NumberFormat;
 /**
  * 线程8锁问题
  */
-@Slf4j(topic = "c.TestSynchronizedDemo1")
-public class TestSynchronizedDemo1 {
+@Slf4j(topic = "c.QuestionSynchronized")
+public class QuestionSynchronized {
     //情况1
     @Slf4j(topic = "c.Number1")
     static class Number1 {
@@ -145,7 +145,9 @@ public class TestSynchronizedDemo1 {
     }
 
     //情况5
+    //先2后1
     static class Number5 {
+        //static synchronized 静态同步方法的锁对象是类对象
         public static synchronized void a() {
             try {
                 Thread.sleep(1000);
@@ -155,6 +157,7 @@ public class TestSynchronizedDemo1 {
             log.debug("1");
         }
 
+        //锁住的是this对象
         public synchronized void b() {
             log.debug("2");
         }
@@ -162,8 +165,71 @@ public class TestSynchronizedDemo1 {
 
     @Test
     public void t5() throws InterruptedException {
-        Number4 n1 = new Number4();
-        Number4 n2 = new Number4();
+        Number5 n = new Number5();
+        new Thread(() -> {
+            n.a();
+        }).start();
+        new Thread(() -> {
+            n.b();
+        }).start();
+        Thread.sleep(3000);
+        log.debug("end");
+    }
+
+    //情况6
+    static class Number6 {
+        //static synchronized 静态同步方法的锁对象是类对象
+        public static synchronized void a() {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            log.debug("1");
+        }
+
+        //锁住的是类对象
+        public static synchronized void b() {
+            log.debug("2");
+        }
+    }
+
+    @Test
+    public void t6() throws InterruptedException {
+        Number6 n = new Number6();
+        new Thread(() -> {
+            n.a();
+        }).start();
+        new Thread(() -> {
+            n.b();
+        }).start();
+        Thread.sleep(3000);
+        log.debug("end");
+    }
+
+    //情况7
+    //两个不同的锁，互不干扰
+    static class Number7 {
+        //static synchronized 静态同步方法的锁对象是类对象
+        public static synchronized void a() {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            log.debug("1");
+        }
+
+        //锁住的是this对象
+        public synchronized void b() {
+            log.debug("2");
+        }
+    }
+
+    @Test
+    public void t7() throws InterruptedException {
+        Number7 n1 = new Number7();
+        Number7 n2 = new Number7();
         new Thread(() -> {
             n1.a();
         }).start();
@@ -174,5 +240,36 @@ public class TestSynchronizedDemo1 {
         log.debug("end");
     }
 
+    //情况8
+    //即使是两个实例对象调用，但是使用的还是同一个锁对象（类对象），可同步
+    static class Number8 {
+        //static synchronized 静态同步方法的锁对象是类对象
+        public static synchronized void a() {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            log.debug("1");
+        }
 
+        //锁住的是类对象
+        public static synchronized void b() {
+            log.debug("2");
+        }
+    }
+
+    @Test
+    public void t8() throws InterruptedException {
+        Number8 n1 = new Number8();
+        Number8 n2 = new Number8();
+        new Thread(() -> {
+            n1.a();
+        }).start();
+        new Thread(() -> {
+            n2.b();
+        }).start();
+        Thread.sleep(3000);
+        log.debug("end");
+    }
 }
