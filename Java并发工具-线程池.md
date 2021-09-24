@@ -1,8 +1,25 @@
-## 线程池
+Java并发工具-线程池
+
 ### 1、自定义线程池
 自定义线程池的思想是基于享元模式，充分利用已经创建的线程，减少内存开销。
 
-![image-20210923082504346](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923082504346.png)
+```mermaid
+graph LR
+subgraph Blocking Queue
+task1-->task2-->task3
+end
+
+subgraph Thread Pool
+t1-->|"poll"|task1
+t2-.->|"poll"|task1
+t3-.->|"poll"|task1
+end
+
+task3---|"put"|main
+
+```
+
+
 
 生产者消费者模式,任务放在阻塞队列，线程池中的线程处理阻塞队列中的任务。
 
@@ -232,9 +249,23 @@ class BlockQueue<T> {
 }
 ```
 
-运行结果：
+> 运行结果
 
-![image-20210923082742612](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923082742612.png)
+```
+14:13:28.765 [main] DEBUG c.MyThreadPool - 新增工作线程 Thread[Thread-0,5,main],将要执行 Task{name='Task--->0'}
+14:13:28.790 [main] DEBUG c.MyThreadPool - 新增工作线程 Thread[Thread-1,5,main],将要执行 Task{name='Task--->1'}
+14:13:28.790 [main] DEBUG c.BlockQueue - Task{name='Task--->2'} 加入阻塞队列
+14:13:28.792 [Thread-0] DEBUG c.MyThreadPool - 正在执行任务 Task{name='Task--->0'}
+14:13:28.792 [Thread-1] DEBUG c.MyThreadPool - 正在执行任务 Task{name='Task--->1'}
+14:13:33.792 [Thread-1] DEBUG c.Task - Task--->1
+14:13:33.792 [Thread-0] DEBUG c.Task - Task--->0
+14:13:33.792 [Thread-1] DEBUG c.MyThreadPool - 正在执行任务 Task{name='Task--->2'}
+14:13:34.793 [Thread-0] DEBUG c.MyThreadPool - 移除工作线程 Thread[Thread-0,5,main]
+14:13:38.794 [Thread-1] DEBUG c.Task - Task--->2
+14:13:39.798 [Thread-1] DEBUG c.MyThreadPool - 移除工作线程 Thread[Thread-1,5,main]
+```
+
+
 
 #### 1.2 当阻塞队列满时，要加入拒绝策略
 拒绝策略是通过定义一个函数式接口实现的，利用该接口可以在运行时实现不同的拒绝策略。
@@ -247,8 +278,6 @@ MyThreadPool<Task> myThreadPool =
                 ((queue, task) -> queue.put(task)));
 ```
 
-![image-20210923083313963](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923083313963.png)
-
 ##### 策略2：设置超时等待
 
 ```java
@@ -257,8 +286,6 @@ MyThreadPool<Task> myThreadPool =
                 ((queue, task) -> queue.offer(task, 1000, TimeUnit.MILLISECONDS)));
 ```
 
-![image-20210923083352865](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923083352865.png)
-
 ##### 策略3：阻塞队列满时放弃
 
 ```java
@@ -266,8 +293,6 @@ MyThreadPool<Task> myThreadPool =
         new MyThreadPool<>(1, 1000, TimeUnit.MILLISECONDS, 1,
                 ((queue, task) -> log.debug("放弃执行任务")));
 ```
-
-![image-20210923083414923](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923083414923.png)
 
 ##### 策略4：阻塞队列满时抛出异常
 
@@ -278,8 +303,6 @@ MyThreadPool<Task> myThreadPool =
                     throw new RuntimeException("任务执行失败");
                 }));
 ```
-
-![image-20210923083502898](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923083502898.png)
 
 ##### 策略5：自身调用
 
@@ -623,7 +646,20 @@ class BlockQueue<T> {
 
 ### 2、ThreadPoolExecutor
 
-![image-20210923084129439](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923084129439.png)
+```mermaid
+graph LR
+t1["接口：ExecutorService"]
+t2["接口：ScheduledExecutorService"]
+p1("实现类：ThreadPoolExecutor")
+p2("实现类：ScheduledThreadPoolExecutor")
+t2-->|"继承"|t1
+p1-.->|"实现"|t1
+p2-.->|"实现"|t2
+p2-->|"继承"|p1
+
+style t1 fill:#f9f,stroke:#333,stroke-width:2px
+style t2 fill:#f9f,stroke:#333,stroke-width:2px
+```
 
 - ExecutorService：线程池最基本的接口
 - ScheduleExecutorService：扩展的接口，添加了任务调度的功能，定时执行任务
@@ -732,7 +768,17 @@ style mt1 fill:#ccf,stroke:#f66,stroke-width:2px,stroke-dasharray:5,5
 - 当高峰过去后，超过corePoolSize 的救急线程如果一段时间没有任务做，需要结束节省资源，这个时间由
 keepAliveTime 和 unit 来控制。  
 
-![image-20210923123433435](C:\Users\tom\AppData\Roaming\Typora\typora-user-images\image-20210923123433435.png)
+```mermaid
+flowchart LR
+interface1["RejectedExecutionHandler"]:::someclass
+class1["DiscardPolicy"]-.->interface1
+class2["DiscardOldestPolicy"]-.->interface1
+class3["CallerRUnPolicy"]-.->interface1
+class4["AbortPolicy"]-.->interface1
+classDef someclass fill:#f96;
+```
+
+
 
 根据这个构造方法，JDK `Executors类`中提供了众多工厂方法来创建各种用途的线程池  。
 
@@ -815,8 +861,6 @@ public static ExecutorService newFixedThreadPool(int nThreads) {
 14:19:28.328 [pool-1-thread-2] DEBUG c.Test_ThreadPoolExecutor - 3
 14:19:29.438 [pool-1-thread-1] DEBUG c.Test_ThreadPoolExecutor - 4
 ```
-
-
 
 
 
@@ -1719,7 +1763,7 @@ static String cooking() {
 
 ###### CPU密集运算
 
-通常采用 cpu 核数 + 1 能够实现最优的 CPU 利用率，+1 是保证当线程由于页缺失故障（操作系统）或其它原因导致暂停时，额外的这个线程就能顶上去，保证 CPU 时钟周期不被浪费
+通常采用 cpu 核数 + 1 能够实现最优的 CPU 利用率，+1 是保证当线程由于页缺失故障（操作系统）或其它原因导致暂停时，额外的这个线程就能顶上去，保证 CPU 时钟周期不被浪费。
 
 ###### I/O密集运算
 
@@ -1733,7 +1777,576 @@ CPU 不总是处于繁忙状态，例如，当你执行业务计算时，这时�
 
 #### 2.8 任务调度线程池
 
+##### 2.8.1 Timer、TimeTask的缺点
+
+在『任务调度线程池』功能加入之前，可以使用 java.util.Timer 来实现定时功能，Timer 的优点在于简单易用，但由于所有任务都是由同一个线程来调度，因此所有任务都是串行执行的，同一时间只能有一个任务在执行，前一个任务的延迟或异常都将会影响到之后的任务。
+
+> Timer、TimerTask代码演示
+
+```java
+    @Test
+    public void test_Timer_TimerTask() {
+        Timer timer = new Timer();
+        TimerTask task1 = new TimerTask() {
+            @Override
+            public void run() {
+                log.debug("task-1");
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+        TimerTask task2 = new TimerTask() {
+            @Override
+            public void run() {
+                log.debug("task-2");
+            }
+        };
+
+        //timer对象延时1秒执行任务1,2
+        timer.schedule(task1, 1000);
+        timer.schedule(task2, 1000);
+
+        while (true) ;
+    }
+```
+> 运行结果
+
+```
+08:30:51.996 [Timer-0] DEBUG c.Test_TimerTask - task-1
+08:30:53.005 [Timer-0] DEBUG c.Test_TimerTask - task-2
+```
+
+
+
+> 注意：如果Timer对象执行任务时发生了异常，会导致线程结束，任务也不能继续执行。
+
+```java
+    @Test
+    public void test_Timer_TimerTask_Exception() {
+        Timer timer = new Timer();
+        TimerTask task1 = new TimerTask() {
+            @Override
+            public void run() {
+                log.debug("task-1");
+                int i = 1 / 0;
+            }
+        };
+        TimerTask task2 = new TimerTask() {
+            @Override
+            public void run() {
+                log.debug("task-2");
+            }
+        };
+
+        //timer对象延时1秒执行任务1,2
+        timer.schedule(task1, 1000);
+        timer.schedule(task2, 1000);
+
+        while (true) ;
+    }
+```
+> 运行结果
+
+```
+08:34:58.547 [Timer-0] DEBUG c.Test_TimerTask - task-1
+Exception in thread "Timer-0" java.lang.ArithmeticException: / by zero
+```
+
+
+
+##### 2.8.2 使用 ScheduledExecutorService替换Timer
+
+使用ScheduledExecutorService替换Timer，这样可以保证每个任务并发执行（如果将线程池大小设为1，则相当于是串行），并且其中1个任务抛出异常，不会导致别的任务终止。
+
+###### （1） ScheduledExecutorService 延时执行任务
+
+> schedule方法，延时执行任务
+
+```java
+    @Test
+    public void test_newScheduledThreadPool() {
+        ScheduledExecutorService pool = Executors.newScheduledThreadPool(2);
+        pool.schedule(() -> {
+            log.debug("task-1");
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }, 1000, TimeUnit.MILLISECONDS);
+        pool.schedule(() -> {
+            log.debug("task-2");
+            int i = 1 / 0;
+        }, 1000, TimeUnit.MILLISECONDS);
+
+        while (true) ;
+    }
+```
+> 输出
+
+```
+09:17:12.003 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - task-1
+09:17:12.003 [pool-1-thread-2] DEBUG c.Test_ScheduledThreadPool - task-2
+```
+
+
+
+###### （2）ScheduledExecutorService 定时执行任务
+
+> scheduleAtFixedRate方法，如果任务执行的时间大于间隔时间，则下一次执行任务不会等待间隔时间，紧接着执行下一个任务。
+
+```java
+    //command任务
+    //initialDelay 延时时间
+    //period  间隔时间
+    //unit 时间单位
+    public ScheduledFuture<?> scheduleAtFixedRate(Runnable command,
+                                                  long initialDelay,
+                                                  long period,
+                                                  TimeUnit unit);
+```
+
+```java
+@Test
+    public void test_ScheduledThreadPool_OnTime() {
+        ScheduledExecutorService pool = Executors.newScheduledThreadPool(2);
+        pool.scheduleAtFixedRate(() -> {
+            log.debug("running...");
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }, 1000, 1000, TimeUnit.MILLISECONDS);
+        while (true) ;
+    }
+```
+
+> 输出
+
+```
+09:26:38.879 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+09:26:40.887 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+09:26:42.887 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+```
+
+
+
+> scheduleWithFixedDelay 方法，该方法如果任务执行时间超过间隔时间，则执行下一次任务时仍然要等待间隔时间。
+
+```java
+    @Test
+    public void test_ScheduledThreadPool_scheduleWithFixedDelay() {
+        ScheduledExecutorService pool = Executors.newScheduledThreadPool(2);
+        pool.scheduleWithFixedDelay(() -> {
+            log.debug("running...");
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }, 1000, 1000, TimeUnit.MILLISECONDS);
+        while (true) ;
+    }
+```
+> 输出
+
+```
+09:29:26.970 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+09:29:29.976 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+09:29:32.977 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+09:29:35.978 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - running...
+```
+
+
+
 #### 2.9 正确处理执行任务异常
 
-#### 2.10 tomcat线程池
+- 用 try/cathch 自己捕捉异常。
+- 用Future<T> 接收返回结果，如果发生了异常，会把异常封装在future对象中，可以使用future.get();获取异常。
+
+```java
+    @Test
+    public void test_ScheduledThreadPool_catchException() throws ExecutionException, InterruptedException {
+        ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
+        executor.schedule(() -> {
+            log.debug("task-1");
+            //1.使用try/catch捕获异常
+            try {
+                int i = 1 / 0;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }, 1000, TimeUnit.MILLISECONDS);
+
+        //2.使用Future<T>对象
+        ScheduledFuture<Integer> future = executor.schedule(() -> {
+            log.debug("task-2");
+            int i = 1 / 0;
+            return 0;
+        }, 1000, TimeUnit.MILLISECONDS);
+
+        log.debug("{}", future.get());
+    }
+```
+
+> 输出
+
+```
+09:50:42.235 [pool-1-thread-2] DEBUG c.Test_ScheduledThreadPool - task-2
+09:50:42.234 [pool-1-thread-1] DEBUG c.Test_ScheduledThreadPool - task-1
+java.lang.ArithmeticException: / by zero
+java.util.concurrent.ExecutionException: java.lang.ArithmeticException: / by zero
+```
+
+
+
+#### 2.10 线程池应用-定时任务
+
+如何让每周四 18:00:00 定时执行任务？
+
+使用ScheduledThreadService定时执行任务，关键在于初始时间和时间间隔的计算。
+
+```java
+//周四18:00：00 定时执行任务
+    @Test
+    public void test() {
+        //计算初始延时时间（当前时间到周四18:00:00的时间）
+        LocalDateTime now = LocalDateTime.now();    //获取当前时间
+        LocalDateTime time = now.withHour(18).withMinute(0).withSecond(0).
+            withNano(0).with(DayOfWeek.THURSDAY);
+        //判断：如果当前时间已经超过周四，则要加1周
+        if (now.compareTo(time) > 0) {
+            time = time.plusWeeks(1);
+        }
+        long initalDelay = Duration.between(now, time).toMillis();
+
+        //计算每周时间间隔
+        long period = 1000 * 60 * 60 * 24 * 7;
+
+        System.out.println(initalDelay);
+        System.out.println(period);
+        ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
+        executor.scheduleAtFixedRate(() -> {
+            log.debug("执行任务...");
+        }, initalDelay, period, TimeUnit.MILLISECONDS);
+
+        while (true) ;
+    }
+```
+
+
+
+#### 2.11 Tomcat线程池
+
+```mermaid
+flowchart TB
+subgraph A["Connector(NIO EndPoint)"]
+subgraph B["Executor"]
+worker1("worker1")
+worker2("worker1")
+end
+LimitLatch("LimitLatch")-->Acceptor("Acceptor")-->SocketChannel1(""SocketChannel1) & SocketChannel2("SocketChannel2")--"有读"--->Poller("Poller")--"socketProcessor"--->worker1 & worker2
+end
+```
+
+- LimitLatch 用来限流，可以控制最大连接个数，类似 J.U.C 中的 Semaphore 后面再讲
+- Acceptor 只负责【接收新的 socket 连接】
+- Poller 只负责监听 socket channel 是否有【可读的 I/O 事件】
+- 一旦可读，封装一个任务对象（socketProcessor），提交给 Executor 线程池处理
+- Executor 线程池中的工作线程最终负责【处理请求】  
+
+
+
+Tomcat 线程池扩展了 ThreadPoolExecutor，行为稍有不同：
+
+- 如果总线程数达到 maximumPoolSize，这时不会立刻抛 RejectedExecutionException 异常
+  而是再次尝试将任务放入队列，如果还失败，才抛出 RejectedExecutionException 异常
+
+
+
+源码 tomcat-7.0.42
+
+```java
+    public void execute(Runnable command, long timeout, TimeUnit unit) {
+        submittedCount.incrementAndGet();
+        try {
+            super.execute(command);
+        } catch (RejectedExecutionException rx) {  //拒绝策略
+            if (super.getQueue() instanceof TaskQueue) {
+                final TaskQueue queue = (TaskQueue) super.getQueue();
+                try {
+                    if (!queue.force(command, timeout, unit)) {
+                        submittedCount.decrementAndGet();
+                        throw new RejectedExecutionException("Queue capacity is full.");
+                    }
+                } catch (InterruptedException x) {
+                    submittedCount.decrementAndGet();
+                    Thread.interrupted();
+                    throw new RejectedExecutionException(x);
+                }
+            }
+        } else{
+            submittedCount.decrementAndGet();
+            throw rx;
+        }
+    }
+```
+
+
+
+TaskQueue.java
+
+```java
+    public boolean force(Runnable o, long timeout, TimeUnit unit) throws InterruptedException {
+        if ( parent.isShutdown() )
+            throw new RejectedExecutionException(
+                    "Executor not running, can't force a command into the queue"
+            );
+        return super.offer(o,timeout,unit); //forces the item onto the queue, to be used if the task  is rejected
+    }
+```
+
+
+
+Connector配置
+
+| 配置项              | 默认值 | 说明                                   |
+| ------------------- | ------ | -------------------------------------- |
+| acceptorThreadCount | 1      | acceptor 线程数量                      |
+| pollerThreadCount   | 1      | poller 线程数量                        |
+| minSpareThreads     | 10     | 核心线程数，即 corePoolSize            |
+| maxThreads          | 200    | 最大线程数，即 maximumPoolSize         |
+| executor            | -      | Executor 名称，用来引用下面的 Executor |
+
+
+
+Executor配置
+
+| 配置项                  | 默认值            | 说明                                       |
+| ----------------------- | ----------------- | ------------------------------------------ |
+| threadPriority          | 5                 | 线程优先级                                 |
+| daemon                  | true              | 是否守护线程                               |
+| minSpareThreads         | 25                | 核心线程数，即 corePoolSize                |
+| maxThreads              | 200               | 最大线程数，即 maximumPoolSize             |
+| maxIdleTime             | 60000             | 线程生存时间，单位是毫秒，默认值即 1 分钟  |
+| maxQueueSize            | Integer.MAX_VALUE | 队列长度（Tomcat对阻塞队列扩展）           |
+| prestartminSpareThreads | false             | 核心线程是否在服务器启动时启动（默认懒惰） |
+
+```mermaid
+flowchart TB
+subgraph Graph
+A("添加新任务")-->B("提交任务 < 核心线程")
+B--是--->C("计入队列")
+B--否--->D("提交任务 < 最大线程")--否--->C
+D--是--->E("创建救急线程")
+end
+```
+
+### 3、Fork/join
+
+3.1 概念
+
+Fork/Join 是 JDK 1.7 加入的新的线程池实现，它体现的是一种分治思想，适用于能够进行任务拆分的 cpu 密集型
+运算。
+
+所谓的任务拆分，是将一个大任务拆分为算法上相同的小任务，直至不能拆分可以直接求解。跟递归相关的一些计
+算，如归并排序、斐波那契数列、都可以用分治思想进行求解
+Fork/Join 在分治的基础上加入了多线程，可以把每个任务的分解和合并交给不同的线程来完成，进一步提升了运
+算效率。
+Fork/Join 默认会创建与 cpu 核心数大小相同的线程池  
+
+
+
+3.2 使用
+
+提交给 Fork/Join 线程池的任务需要继承 RecursiveTask（有返回值）或 RecursiveAction（没有返回值）
+
+> 定义了一个对 1~n 之间的整数求和的任务  
+
+```java
+package com.concurrent.p9;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.Test;
+
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveTask;
+
+@Slf4j(topic = "c.Test_ForkAndJoin")
+public class Test_ForkAndJoin {
+
+    @Test
+    public void test_forkAndJoin_SimpleAdd() {
+        ForkJoinPool pool = new ForkJoinPool(4);
+        Integer integer = pool.invoke(new MyTask(5));
+        log.debug("最终计算结果：{}", integer);
+    }
+}
+
+@Slf4j(topic = "c.MyTask")
+class MyTask extends RecursiveTask<Integer> {
+
+    private int n;
+
+    public MyTask(int n) {
+        this.n = n;
+    }
+
+    @Override
+    protected Integer compute() {
+        if (n == 1) {
+            return 1;
+        }
+        MyTask t1 = new MyTask(n - 1);  //类似递归，让每一个线程执行单次递归
+        t1.fork();
+        log.debug("当前n:{}", n);
+        //模拟执行
+        try {
+            log.debug("开始计算...");
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        log.debug("当前线程计算结果:{}", t1.join());
+        int result = n + t1.join();
+        log.debug("当前result:{}", result);
+        return result;
+    }
+}
+
+```
+
+> 运行结果
+
+```
+12:03:26.250 [ForkJoinPool-1-worker-1] DEBUG c.MyTask - 当前n:5			  #线程1开始
+12:03:26.254 [ForkJoinPool-1-worker-2] DEBUG c.MyTask - 当前n:4
+12:03:26.256 [ForkJoinPool-1-worker-2] DEBUG c.MyTask - 开始计算...
+12:03:26.257 [ForkJoinPool-1-worker-1] DEBUG c.MyTask - 开始计算...			 #线程1开始
+12:03:26.257 [ForkJoinPool-1-worker-3] DEBUG c.MyTask - 当前n:3
+12:03:26.257 [ForkJoinPool-1-worker-3] DEBUG c.MyTask - 开始计算...
+12:03:26.258 [ForkJoinPool-1-worker-0] DEBUG c.MyTask - 当前n:2
+12:03:26.259 [ForkJoinPool-1-worker-0] DEBUG c.MyTask - 开始计算...
+12:03:27.260 [ForkJoinPool-1-worker-0] DEBUG c.MyTask - 当前线程计算结果:1
+12:03:27.260 [ForkJoinPool-1-worker-0] DEBUG c.MyTask - 当前result:3
+12:03:27.260 [ForkJoinPool-1-worker-3] DEBUG c.MyTask - 当前线程计算结果:3
+12:03:27.260 [ForkJoinPool-1-worker-3] DEBUG c.MyTask - 当前result:6
+12:03:27.260 [ForkJoinPool-1-worker-2] DEBUG c.MyTask - 当前线程计算结果:6
+12:03:27.260 [ForkJoinPool-1-worker-2] DEBUG c.MyTask - 当前result:10
+12:03:27.260 [ForkJoinPool-1-worker-1] DEBUG c.MyTask - 当前线程计算结果:10		#线程1开始
+12:03:27.260 [ForkJoinPool-1-worker-1] DEBUG c.MyTask - 当前result:15		    #线程1开始
+12:03:27.260 [main] DEBUG c.Test_ForkAndJoin - 最终计算结果：15
+```
+
+> 分析
+
+```mermaid
+flowchart TB
+subgraph  fork/join 分析
+n=5-->t1("worker-1: 5+{4}")-->t2("worker-2: 4+{3}")-->t3("worker-3: 3+{2}")-->t0("worker-0: 2+{1}")-->stop(n==1)
+
+stop-.->|"1"|t0-.->|"3"|t3-.->|"6"|t2-.->|"10"|t1-.->|"15"|result
+end
+```
+
+3.3 改进
+
+```java
+package com.concurrent.p9;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.Test;
+
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveTask;
+
+@Slf4j(topic = "c.Test_ForkAndJoin_Update")
+public class Test_ForkAndJoin_Update {
+
+    @Test
+    public void test() {
+        ForkJoinPool pool = new ForkJoinPool(4);
+        int result = pool.invoke(new AddTask(1, 5));
+        log.debug("最终结果：{}", result);
+    }
+}
+
+@Slf4j(topic = "c.AddTask")
+class AddTask extends RecursiveTask<Integer> {
+
+    private int begin;
+    private int end;
+
+    public AddTask(int begin, int end) {
+        this.begin = begin;
+        this.end = end;
+    }
+
+    @Override
+    public String toString() {
+        return "{" + begin + "," + end + '}';
+    }
+
+    @Override
+    protected Integer compute() {
+        //递归出口
+        if (begin == end) {
+            log.debug("join() {}", begin);
+            return begin;
+        }
+        //中点
+        int mid = (begin + end) / 2;
+        AddTask task1 = new AddTask(begin, mid);
+        AddTask task2 = new AddTask(mid + 1, end);
+        //fork
+        task1.fork();
+        task2.fork();
+        log.debug("fork() {} + {} = ?", task1, task2);
+        //模拟运算
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        //join
+        int result = task1.join() + task2.join();
+        log.debug("join() {} + {} = {}", task1, task2, result);
+        return result;
+    }
+}
+
+```
+
+>  运行结果
+
+```
+13:52:53.910 [ForkJoinPool-1-worker-3] DEBUG c.AddTask - fork() {4,4} + {5,5} = ?  【4】 
+13:52:53.910 [ForkJoinPool-1-worker-1] DEBUG c.AddTask - fork() {1,3} + {4,5} = ?  【1】
+13:52:53.910 [ForkJoinPool-1-worker-0] DEBUG c.AddTask - fork() {1,1} + {2,2} = ?  【3】
+13:52:53.910 [ForkJoinPool-1-worker-2] DEBUG c.AddTask - fork() {1,2} + {3,3} = ?  【2】
+13:52:55.917 [ForkJoinPool-1-worker-1] DEBUG c.AddTask - join() 3
+13:52:55.917 [ForkJoinPool-1-worker-3] DEBUG c.AddTask - join() 4
+13:52:55.917 [ForkJoinPool-1-worker-1] DEBUG c.AddTask - join() 2
+13:52:55.917 [ForkJoinPool-1-worker-3] DEBUG c.AddTask - join() 5
+13:52:55.917 [ForkJoinPool-1-worker-0] DEBUG c.AddTask - join() 1
+13:52:55.917 [ForkJoinPool-1-worker-0] DEBUG c.AddTask - join() {1,1} + {2,2} = 3
+13:52:55.917 [ForkJoinPool-1-worker-3] DEBUG c.AddTask - join() {4,4} + {5,5} = 9
+13:52:55.917 [ForkJoinPool-1-worker-2] DEBUG c.AddTask - join() {1,2} + {3,3} = 6
+13:52:55.918 [ForkJoinPool-1-worker-1] DEBUG c.AddTask - join() {1,3} + {4,5} = 15
+13:52:55.918 [main] DEBUG c.Test_ForkAndJoin_Update - 最终结果：15
+```
+
+分析
+
+```mermaid
+graph TB
+n1("1,2,3,4,5")-->n2("1,2,3")  &  n3("4,5")
+n2-->n4("1,2") & n5("3")
+n3-->n6("4") & n7("5")
+n4-->n8("1") & n9("2")
+```
 

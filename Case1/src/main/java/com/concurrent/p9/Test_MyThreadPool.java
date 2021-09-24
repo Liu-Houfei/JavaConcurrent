@@ -25,7 +25,7 @@ public class Test_MyThreadPool {
          *                         ((queue, task) -> queue.put(task)));
          */
         MyThreadPool<Task> myThreadPool =
-                new MyThreadPool<>(1, 1000, TimeUnit.MILLISECONDS, 1,
+                new MyThreadPool<>(2, 1000, TimeUnit.MILLISECONDS, 5,
                         ((queue, task) -> queue.put(task)));
 
         /**
