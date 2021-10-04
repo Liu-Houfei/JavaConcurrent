@@ -1924,13 +1924,15 @@ tryAcquireShared 返回值表示
 
 ![image-20210929164445287](images/image-20210929164445287.png)
 
-3）这时会进入 sync.doAcquireShared(1) 流程，首先也是调用 addWaiter 添加节点，不同之处在于节点被设置为Node.SHARED 模式而非 Node.EXCLUSIVE 模式，注意此时 t2 仍处于活跃状态  
+3）这时会进入 sync.doAcquireShared(1) 流程，首先也是调用 addWaiter 添加节点，不同之处在于节点被设置为`Node.SHARED 模式`而非 Node.EXCLUSIVE 模式，注意此时 t2 仍处于活跃状态  
 
 ![image-20210929164535577](images/image-20210929164535577.png)
 
 4）t2 会看看自己的节点是不是老二，如果是，还会再次调用 tryAcquireShared(1) 来尝试获取锁  
 
-5）如果没有成功，在 doAcquireShared 内 for (;;) 循环一次，把前驱节点的 waitStatus 改为 -1，再 for (;;) 循环一次尝试 tryAcquireShared(1) 如果还不成功，那么在 parkAndCheckInterrupt() 处 park  
+5）如果没有成功，在 doAcquireShared 内 for (;;) 循环一次，把前驱节点的 waitStatus 改为 -1，
+
+再 for (;;) 循环一次尝试 tryAcquireShared(1) 如果还不成功，那么在 parkAndCheckInterrupt() 处 park  
 
 ![image-20210929164620091](images/image-20210929164620091.png)
 
@@ -1938,7 +1940,9 @@ tryAcquireShared 返回值表示
 
 #### t3 r.lock，t4 w.lock  
 
-这种状态下，假设又有 t3 加读锁和 t4 加写锁，这期间 t1 仍然持有锁，就变成了下面的样子  
+这种状态下，假设又有 t3 加读锁和 t4 加写锁，这期间 t1 仍然持有锁，就变成了下面的样子 ,
+
+读锁为shared,写锁为Ex
 
 ![image-20210929164712968](images/image-20210929164712968.png)
 
@@ -1952,7 +1956,7 @@ tryAcquireShared 返回值表示
 
 接下来执行唤醒流程 sync.unparkSuccessor，即让老二恢复运行，这时 t2 在 doAcquireShared 内
 parkAndCheckInterrupt() 处恢复运行
-这回再来一次 for (;;) 执行 tryAcquireShared 成功则让读锁计数加一  
+这回再来一次 for (;;) 执行 tryAcquireShared 成功则让读锁计数加1 
 
 ![image-20210929164910695](images/image-20210929164910695.png)
 
@@ -1996,13 +2000,1050 @@ doReleaseShared() 将头节点从 -1 改为 0 并唤醒老二，即
 
 
 
-## 5.Semaphore
+### 4.2 源码分析
+
+#### 4.2.1 写锁上锁流程
+
+```java
+static final class NonfairSync extends Sync {
+    // ... 省略无关代码
+    // 外部类 WriteLock 方法, 方便阅读, 放在此处
+    public void lock() {
+    	sync.acquire(1);
+	}
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	public final void acquire(int arg) {
+    if (
+        // 尝试获得写锁失败
+        !tryAcquire(arg) &&
+        // 将当前线程关联到一个 Node 对象上, 模式为独占模式
+        // 进入 AQS 队列阻塞
+        acquireQueued(addWaiter(Node.EXCLUSIVE), arg)
+    	) {
+        	selfInterrupt();
+    	  }
+    }
+    
+    // Sync 继承过来的方法, 方便阅读, 放在此处
+	protected final boolean tryAcquire(int acquires) {
+		// 获得低 16 位, 代表写锁的 state 计数
+        Thread current = Thread.currentThread();
+        int c = getState();
+        int w = exclusiveCount(c);
+        if (c != 0) {
+        if (
+            // c != 0 and w == 0 表示有读锁, 或者
+        	w == 0 ||
+        	// 如果 exclusiveOwnerThread 不是自己
+        	current != getExclusiveOwnerThread()
+        	) {
+        		// 获得锁失败
+       			return false;
+        	  }
+        // 写锁计数超过低 16 位, 报异常
+        if (w + exclusiveCount(acquires) > MAX_COUNT)
+        	throw new Error("Maximum lock count exceeded");
+        // 写锁重入, 获得锁成功
+        setState(c + acquires);
+        return true;
+   }
+   if (
+        // 判断写锁是否该阻塞, 或者
+        writerShouldBlock() ||
+        // 尝试更改计数失败
+        !compareAndSetState(c, c + acquires)
+       ) {
+        // 获得锁失败
+        return false;
+       }
+       // 获得锁成功
+       setExclusiveOwnerThread(current);
+       return true;
+   }
+    
+   // 非公平锁 writerShouldBlock 总是返回 false, 无需阻塞
+    final boolean writerShouldBlock() {
+    	return false;
+    }
+}
+```
+
+
+
+#### 4.2.2 写锁释放流程
+
+```java
+static final class NonfairSync extends Sync {
+    // ... 省略无关代码
+    // WriteLock 方法, 方便阅读, 放在此处
+    public void unlock() {
+        sync.release(1);
+	}
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	public final boolean release(int arg) {
+		// 尝试释放写锁成功
+        if (tryRelease(arg)) {
+        	// unpark AQS 中等待的线程
+        	Node h = head;
+	        if (h != null && h.waitStatus != 0)
+        		unparkSuccessor(h);
+        	return true;
+        }
+        return false;
+    }
+    
+    // Sync 继承过来的方法, 方便阅读, 放在此处
+    protected final boolean tryRelease(int releases) {
+    	if (!isHeldExclusively())
+    		throw new IllegalMonitorStateException();
+    	int nextc = getState() - releases;
+    	// 因为可重入的原因, 写锁计数为 0, 才算释放成功
+    	boolean free = exclusiveCount(nextc) == 0;
+    	if (free) {
+        	setExclusiveOwnerThread(null);
+   		}
+    	setState(nextc);
+    	return free;
+    }
+    
+    
+```
+
+
+
+#### 4.2.3 读锁上锁流程
+
+```java
+static final class NonfairSync extends Sync {
+	// ReadLock 方法, 方便阅读, 放在此处
+	public void lock() {
+		sync.acquireShared(1);
+	}
+   	
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	public final void acquireShared(int arg) {
+		// tryAcquireShared 返回负数, 表示获取读锁失败
+		if (tryAcquireShared(arg) < 0) {
+			doAcquireShared(arg);
+		}
+	}
+    
+    // Sync 继承过来的方法, 方便阅读, 放在此处
+	protected final int tryAcquireShared(int unused) {
+		Thread current = Thread.currentThread();
+		int c = getState();
+		// 如果是其它线程持有写锁, 获取读锁失败
+		if (
+			exclusiveCount(c) != 0 &&
+			getExclusiveOwnerThread() != current
+			) {
+				return -1;
+        }
+		int r = sharedCount(c);
+		if (
+			// 读锁不该阻塞(如果老二是写锁，读锁该阻塞), 并且
+			!readerShouldBlock() &&
+			// 小于读锁计数, 并且
+			r < MAX_COUNT &&
+			// 尝试增加计数成功
+			compareAndSetState(c, c + SHARED_UNIT)
+			) {
+			// ... 省略不重要的代码
+			return 1;
+		}
+		return fullTryAcquireShared(current);
+	}
+    
+    // 非公平锁 readerShouldBlock 看 AQS 队列中第一个节点是否是写锁
+	// true 则该阻塞, false 则不阻塞
+	final boolean readerShouldBlock() {
+		return apparentlyFirstQueuedIsExclusive();
+	}
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	// 与 tryAcquireShared 功能类似, 但会不断尝试 for (;;) 获取读锁, 执行过程中无阻塞
+	final int fullTryAcquireShared(Thread current) {
+		HoldCounter rh = null;
+		for (;;) {
+			int c = getState();
+			if (exclusiveCount(c) != 0) {
+				if (getExclusiveOwnerThread() != current)
+                return -1;
+             } else if (readerShouldBlock()) {
+				// ... 省略不重要的代码
+			}
+			if (sharedCount(c) == MAX_COUNT)
+				throw new Error("Maximum lock count exceeded");
+            if (compareAndSetState(c, c + SHARED_UNIT)) {
+                // ... 省略不重要的代码
+                return 1;
+            }
+		}
+	}
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	private void doAcquireShared(int arg) {
+		// 将当前线程关联到一个 Node 对象上, 模式为共享模式
+		final Node node = addWaiter(Node.SHARED);
+		boolean failed = true;
+		try {
+			boolean interrupted = false;
+			for (;;) {
+				final Node p = node.predecessor();
+				if (p == head) {
+                    // 再一次尝试获取读锁
+					int r = tryAcquireShared(arg);
+					// 成功
+					if (r >= 0) {
+                        // ㈠
+                        // r 表示可用资源数, 在这里总是 1 允许传播
+                        //（唤醒 AQS 中下一个 Share 节点）
+                        setHeadAndPropagate(node, r);
+						p.next = null; // help GC
+                        if (interrupted)
+                        	selfInterrupt();
+						failed = false;
+						return;
+					}
+				}
+                if (
+                    // 是否在获取读锁失败时阻塞（前一个阶段 waitStatus == Node.SIGNAL）
+                    shouldParkAfterFailedAcquire(p, node) &&	
+                    // park 当前线程
+                    parkAndCheckInterrupt()
+                	) {
+                interrupted = true;
+                }
+			}
+        } finally {
+            if (failed)
+            cancelAcquire(node);
+            }
+	}
+    
+    // ㈠ AQS 继承过来的方法, 方便阅读, 放在此处
+	private void setHeadAndPropagate(Node node, int propagate) {
+		Node h = head; // Record old head for check below
+        // 设置自己为 head
+        setHead(node);
+		// propagate 表示有共享资源（例如共享读锁或信号量）
+		// 原 head waitStatus == Node.SIGNAL 或 Node.PROPAGATE
+		// 现在 head waitStatus == Node.SIGNAL 或 Node.PROPAGATE
+		if (propagate > 0 || h == null || h.waitStatus < 0 ||
+			(h = head) == null || h.waitStatus < 0) {
+				Node s = node.next;
+                // 如果是最后一个节点或者是等待共享读锁的节点
+				if (s == null || s.isShared()) {
+                    // 进入 ㈡
+                    doReleaseShared();
+				}
+		}
+	}
+    
+    // ㈡ AQS 继承过来的方法, 方便阅读, 放在此处
+    private void doReleaseShared() {
+    	// 如果 head.waitStatus == Node.SIGNAL ==> 0 成功, 下一个节点 unpark
+        // 如果 head.waitStatus == 0 ==> Node.PROPAGATE, 为了解决 bug, 见后面分析
+		for (;;) {
+			Node h = head;
+            // 队列还有节点
+            if (h != null && h != tail) {
+                int ws = h.waitStatus;
+                if (ws == Node.SIGNAL) {
+                    if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
+                        continue; // loop to recheck cases
+                        // 下一个节点 unpark 如果成功获取读锁
+                        // 并且下下个节点还是 shared, 继续 doReleaseShared
+                    unparkSuccessor(h);
+            	}
+				else if (ws == 0 &&
+						!compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
+            		continue; // loop on failed CAS
+           	}
+			if (h == head) // loop if head changed
+				break;
+		}
+	}
+}
+```
+
+
+
+#### 4.2.4 读锁释放流程
+
+```java
+static final class NonfairSync extends Sync {
+    // ReadLock 方法, 方便阅读, 放在此处
+    public void unlock() {
+        sync.releaseShared(1);
+    }
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+    public final boolean releaseShared(int arg) {
+    	if (tryReleaseShared(arg)) {
+    		doReleaseShared();
+    		return true;
+    	}
+    	return false;
+    }
+    
+    // Sync 继承过来的方法, 方便阅读, 放在此处
+    protected final boolean tryReleaseShared(int unused) {
+        // ... 省略不重要的代码
+        for (;;) {
+            int c = getState();
+    		int nextc = c - SHARED_UNIT;
+    		if (compareAndSetState(c, nextc)) {
+                // 读锁的计数不会影响其它获取读锁线程, 但会影响其它获取写锁线程
+                // 计数为 0 才是真正释放
+                return nextc == 0;
+    		}
+        }   
+    }
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+	private void doReleaseShared() {
+        // 如果 head.waitStatus == Node.SIGNAL ==> 0 成功, 下一个节点 unpark
+        // 如果 head.waitStatus == 0 ==> Node.PROPAGATE
+        for (;;) {
+			Node h = head;
+			if (h != null && h != tail) {
+                int ws = h.waitStatus;
+                // 如果有其它线程也在释放读锁，那么需要将 waitStatus 先改为 0
+                // 防止 unparkSuccessor 被多次执行
+                if (ws == Node.SIGNAL) {
+                    if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
+                        continue; // loop to recheck cases
+                    unparkSuccessor(h);
+                }
+                // 如果已经是 0 了，改为 -3，用来解决传播性，见后文信号量 bug 分析
+                else if (ws == 0 &&
+						!compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
+                	continue; // loop on failed CAS
+            }
+            if (h == head) // loop if head changed
+                break;
+		}
+	}
+}         
+```
+
+
+
+## 5. StampedLock
+
+### 5.1 概念
+
+该类自 JDK 8 加入，是为了进一步优化读性能，它的特点是在使用读锁、写锁时都必须配合【戳】使用  
+
+加解读锁  
+
+```java
+long stamp = lock.readLock();
+lock.unlockRead(stamp);
+```
+
+加解写锁  
+
+```java
+long stamp = lock.writeLock();
+lock.unlockWrite(stamp);
+```
+
+乐观读，StampedLock 支持 tryOptimisticRead() 方法（乐观读），读取完毕后需要做一次 戳校验 如果校验通
+过，表示这期间确实没有写操作，数据可以安全使用，如果校验没通过，需要重新获取读锁，保证数据安全。  
+
+```java
+long stamp = lock.tryOptimisticRead();
+// 验戳
+if(!lock.validate(stamp)){
+// 锁升级
+}
+```
+
+### 5.2 例子
+
+```java
+package com.concurrent.p10;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.Test;
+
+import java.util.concurrent.locks.StampedLock;
+
+@Slf4j(topic = "c.Test_StampedLock")
+public class Test_StampedLock {
+
+    /**
+     * 测试读-读
+     * <p>
+     * 12:01:54.621 [Thread-0] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:01:54.621 [Thread-1] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:01:54.629 [Thread-1] DEBUG c.Test_StampedLock - 输出:abc
+     * 12:01:54.629 [Thread-0] DEBUG c.Test_StampedLock - 输出:abc
+     */
+    @Test
+    public void test1() {
+        DataContainerStamped dataContainer = new DataContainerStamped("abc");
+        Thread t1 = new Thread(() -> {
+            String data = dataContainer.read();
+            log.debug("输出:{}", data);
+        });
+        Thread t2 = new Thread(() -> {
+            String data = dataContainer.read();
+            log.debug("输出:{}", data);
+        });
+        t1.start();
+        t2.start();
+        try {
+            t1.join();
+            t2.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 测试读-写
+     *
+     * (1)两个读线程先执行
+     * 12:08:51.140 [Thread-0] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:08:51.143 [Thread-1] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:08:51.150 [Thread-0] DEBUG c.Test_StampedLock - 输出:abc
+     * 12:08:51.150 [Thread-1] DEBUG c.Test_StampedLock - 输出:abc
+     * 12:08:51.243 [Thread-2] DEBUG c.DataContainerStamped - 获取写锁,stamped=384
+     * 12:08:51.243 [Thread-2] DEBUG c.DataContainerStamped - 开始写...
+     * 12:08:53.244 [Thread-2] DEBUG c.DataContainerStamped - 写完成...
+     * 12:08:53.244 [Thread-2] DEBUG c.DataContainerStamped - 释放写锁,stamped=384
+     *
+     * (2)写线程先执行
+     * 12:09:45.258 [Thread-0] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:09:45.263 [Thread-2] DEBUG c.DataContainerStamped - 获取写锁,stamped=384
+     * 12:09:45.258 [Thread-1] DEBUG c.DataContainerStamped - 乐观读,stamped=256
+     * 12:09:45.264 [Thread-2] DEBUG c.DataContainerStamped - 开始写...
+     * 12:09:47.265 [Thread-0] DEBUG c.DataContainerStamped - 乐观读升级读锁,stamped=514
+     * 12:09:47.265 [Thread-0] DEBUG c.DataContainerStamped - 开始读...,stamped=514
+     * 12:09:47.265 [Thread-1] DEBUG c.DataContainerStamped - 乐观读升级读锁,stamped=513
+     * 12:09:47.265 [Thread-1] DEBUG c.DataContainerStamped - 开始读...,stamped=513
+     * 12:09:47.265 [Thread-2] DEBUG c.DataContainerStamped - 写完成...
+     * 12:09:47.265 [Thread-2] DEBUG c.DataContainerStamped - 释放写锁,stamped=384
+     * 12:09:48.265 [Thread-1] DEBUG c.DataContainerStamped - 结束读...,stamped=513
+     * 12:09:48.265 [Thread-0] DEBUG c.DataContainerStamped - 结束读...,stamped=514
+     * 12:09:48.265 [Thread-1] DEBUG c.DataContainerStamped - 释放读锁,stamped=513
+     * 12:09:48.265 [Thread-0] DEBUG c.DataContainerStamped - 释放读锁,stamped=514
+     * 12:09:48.265 [Thread-0] DEBUG c.Test_StampedLock - 输出:jkl
+     * 12:09:48.265 [Thread-1] DEBUG c.Test_StampedLock - 输出:jkl
+     */
+    @Test
+    public void test2() {
+        DataContainerStamped dataContainer = new DataContainerStamped("abc");
+        Thread t1 = new Thread(() -> {
+            String data = dataContainer.read();
+            log.debug("输出:{}", data);
+        });
+        Thread t2 = new Thread(() -> {
+            String data = dataContainer.read();
+            log.debug("输出:{}", data);
+        });
+        Thread t3 = new Thread(() -> {
+            dataContainer.write("jkl");
+        });
+
+        t1.start();
+        t2.start();
+        t3.start();
+        try {
+            t1.join();
+            t2.join();
+            t3.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+@Slf4j(topic = "c.DataContainerStamped")
+class DataContainerStamped {
+    //共享数据
+    private String data;
+    //StampedLock
+    private StampedLock lock = new StampedLock();
+
+    public DataContainerStamped(String data) {
+        this.data = data;
+    }
+
+    //写
+    public void write(String data) {
+        //获取写锁,并返回戳
+        long stamped = lock.writeLock();
+        log.debug("获取写锁,stamped={}", stamped);
+        try {
+            //睡2秒,模拟写入
+            log.debug("开始写...");
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            this.data = data;
+        } finally {
+            //释放写锁,并设置戳
+            lock.unlockWrite(stamped);
+            log.debug("写完成...");
+            log.debug("释放写锁,stamped={}", stamped);
+        }
+    }
+
+    //读
+    public String read() {
+        //乐观读(此过程没有锁),返回戳
+        long stamped = lock.tryOptimisticRead();
+        log.debug("乐观读,stamped={}", stamped);
+        //校验戳
+        if (lock.validate(stamped)) {  //成功则返回结果
+            return this.data;
+        } else { //失败则将乐观读升级成读锁
+            stamped = lock.readLock();
+            log.debug("乐观读升级读锁,stamped={}", stamped);
+            try {
+                log.debug("开始读...,stamped={}", stamped);
+                //模拟读取1秒
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                log.debug("结束读...,stamped={}", stamped);
+                return this.data;
+            } finally {
+                lock.unlockRead(stamped);
+                log.debug("释放读锁,stamped={}", stamped);
+            }
+        }
+    }
+}
+```
+
+### 5.3 StampedLock缺点
 
 
 
 
 
-## 6.Semaphore原理
+
+
+## 6.Semaphore
+
+### 6.1 基本使用
+
+信号量，用来限制能同时访问共享资源的线程上限 .
+
+```java
+package com.concurrent.p10;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.Test;
+
+import java.util.concurrent.Semaphore;
+
+/**
+ * 信号量测试
+ */
+@Slf4j(topic = "c.Test_Semaphore")
+public class Test_Semaphore {
+
+    /**
+     * 15:31:09.082 [Thread-0] DEBUG c.Test_Semaphore - start...
+     * 15:31:09.081 [Thread-1] DEBUG c.Test_Semaphore - start...
+     * 15:31:09.081 [Thread-2] DEBUG c.Test_Semaphore - start...
+     * 15:31:11.086 [Thread-2] DEBUG c.Test_Semaphore - end...
+     * 15:31:11.086 [Thread-0] DEBUG c.Test_Semaphore - end...
+     * 15:31:11.086 [Thread-1] DEBUG c.Test_Semaphore - end...
+     * 15:31:11.086 [Thread-3] DEBUG c.Test_Semaphore - start...
+     * 15:31:11.086 [Thread-4] DEBUG c.Test_Semaphore - start...
+     * 15:31:11.086 [Thread-5] DEBUG c.Test_Semaphore - start...
+     * 15:31:13.086 [Thread-3] DEBUG c.Test_Semaphore - end...
+     * 15:31:13.086 [Thread-4] DEBUG c.Test_Semaphore - end...
+     * 15:31:13.086 [Thread-5] DEBUG c.Test_Semaphore - end...
+     * 15:31:13.086 [Thread-6] DEBUG c.Test_Semaphore - start...
+     * 15:31:13.086 [Thread-7] DEBUG c.Test_Semaphore - start...
+     * 15:31:13.086 [Thread-8] DEBUG c.Test_Semaphore - start...
+     * 15:31:15.087 [Thread-7] DEBUG c.Test_Semaphore - end...
+     * 15:31:15.087 [Thread-8] DEBUG c.Test_Semaphore - end...
+     * 15:31:15.087 [Thread-9] DEBUG c.Test_Semaphore - start...
+     * 15:31:15.087 [Thread-6] DEBUG c.Test_Semaphore - end...
+     * 15:31:17.087 [Thread-9] DEBUG c.Test_Semaphore - end...
+     */
+    @Test
+    public void test1() {
+        //创建Semaphore对象,最大允许3个线程同时运行
+        Semaphore semaphore = new Semaphore(3);
+        for (int i = 0; i < 10; i++) {
+            new Thread(() -> {
+                try {
+                    semaphore.acquire();
+                    log.debug("start...");
+                    Thread.sleep(2000);
+                    log.debug("end...");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    semaphore.release();
+                }
+            }).start();
+        }
+        for (; ; ) ;
+    }
+}
+
+```
+
+
+
+
+
+### 6.2 Semaphore应用
+
+限制对共享资源的使用  
+
+- 使用 Semaphore 限流，在访问高峰期时，让请求线程阻塞，高峰期过去再释放许可，当然它只适合限制单机
+  线程数量，并且仅是限制线程数，而不是限制资源数（例如连接数，请对比 Tomcat LimitLatch 的实现）
+
+- 用 Semaphore 实现简单连接池，对比『享元模式』下的实现（用wait notify），性能和可读性显然更好，
+  注意下面的实现中线程数和数据库连接数是相等的  
+
+ ```java
+ package com.concurrent.p10;
+ 
+ import lombok.extern.slf4j.Slf4j;
+ import org.junit.Test;
+ 
+ import java.sql.*;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Properties;
+ import java.util.concurrent.Executor;
+ import java.util.concurrent.Semaphore;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.atomic.AtomicIntegerArray;
+ 
+ /**
+  * 使用Semaphore改进数据库连接池
+  */
+ @Slf4j(topic = "c.Test_SemaphoreApplication")
+ public class Test_SemaphoreApplication {
+ 
+     class MyConn implements Connection {
+ 
+         private String connName;
+ 
+         public MyConn(String connName) {
+             this.connName = connName;
+         }
+ 
+         @Override
+         public String toString() {
+             return "MyConn{" +
+                     "connName='" + connName + '\'' +
+                     '}';
+         }
+         
+         //...接口实现方法略
+     }
+ 
+     class Pool {
+         //1.最大连接数
+         private final int poolSize;
+         //2.数据库连接数组
+         private Connection connection[];
+         //3.连接状态
+         private AtomicIntegerArray status;
+         //4.信号量
+         private Semaphore semaphore;
+ 
+         public Pool(int poolSize) {
+             this.poolSize = poolSize;
+             this.connection = new Connection[poolSize];
+             this.status = new AtomicIntegerArray(new int[poolSize]);
+             this.semaphore = new Semaphore(poolSize);
+             for (int i = 0; i < poolSize; i++) {
+                 this.connection[i] = new MyConn("conn---" + i);
+             }
+         }
+ 
+         //5.借连接
+         public Connection borrow() {
+             for (; ; ) {
+                 for (int i = 0; i < poolSize; i++) {
+                     //有可用连接,则借出
+                     if (status.get(i) == 0) {
+                         status.set(i, 1);
+                         return connection[i];
+                     }
+                 }
+                 //遍历完一遍如果没有可用连接则等待
+                 synchronized (this) {
+                     try {
+                         this.wait();
+                     } catch (InterruptedException e) {
+                         e.printStackTrace();
+                     }
+                 }
+             }
+         }
+ 
+         //5.使用Semaphore改进借连接
+         public Connection borrow_semaphore() {
+             //获取许可
+             try {
+                 semaphore.acquire();
+             } catch (InterruptedException e) {
+                 e.printStackTrace();
+             }
+             for (int i = 0; i < poolSize; i++) {
+                 //如果有空闲连接,则借出
+                 if (status.compareAndSet(i, 0, 1)) {  //此处要用CAS
+                     return connection[i];
+                 }
+             }
+             return null;
+         }
+ 
+         //6.还连接
+         public void free(Connection connection) {
+             for (int i = 0; i < poolSize; i++) {
+                 if (this.connection[i] == connection) {
+                     status.set(i, 0);
+                     synchronized (this) {
+                         this.notifyAll();
+                     }
+                     break;
+                 }
+             }
+         }
+ 
+         //6.使用Semaphore改进还连接
+         public void free_semaphore(Connection connection) {
+             for (int i = 0; i < poolSize; i++) {
+                 if (this.connection[i] == connection) {
+                     //使用了semaphore,不需要使用notifyAll唤醒其他线程
+                     status.set(i, 0);
+                     semaphore.release();
+                     break;
+                 }
+             }
+         }
+     }
+ 
+     /**
+      * 测试:wait/notify实现借还连接
+      * <p>
+      * 15:58:56.646 [Thread-1] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---1'}
+      * 15:58:56.646 [Thread-2] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---2'}
+      * 15:58:56.646 [Thread-0] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---0'}
+      * 15:59:01.651 [Thread-1] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---1'}
+      * 15:59:01.651 [Thread-3] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---2'}
+      * 15:59:01.651 [Thread-2] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---2'}
+      * 15:59:01.651 [Thread-4] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---1'}
+      * 15:59:01.652 [Thread-0] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---0'}
+      * 15:59:06.652 [Thread-4] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---1'}
+      * 15:59:06.652 [Thread-3] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---2'}
+      */
+     @Test
+     public void test1() {
+         Pool connPool = new Pool(3);
+         List<Thread> threadList = new ArrayList<>();
+         for (int i = 0; i < 5; i++) {
+             threadList.add(new Thread(() -> {
+                 Connection connection = connPool.borrow();
+                 log.debug("borrow conn {}", connection);
+                 //5秒后释放连接
+                 try {
+                     Thread.sleep(5000);
+                 } catch (InterruptedException e) {
+                     e.printStackTrace();
+                 }
+                 connPool.free(connection);
+                 log.debug("free conn {}", connection);
+             }));
+         }
+ 
+         threadList.forEach((s) -> s.start());
+         threadList.forEach((s) -> {
+             try {
+                 s.join();
+             } catch (InterruptedException e) {
+                 e.printStackTrace();
+             }
+         });
+     }
+ 
+     /**
+      * 测试:Semaphore实现借还连接
+      * 16:21:04.845 [Thread-1] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---0'}
+      * 16:21:04.845 [Thread-0] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---1'}
+      * 16:21:04.845 [Thread-2] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---2'}
+      * 16:21:09.851 [Thread-1] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---0'}
+      * 16:21:09.851 [Thread-4] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---1'}
+      * 16:21:09.851 [Thread-3] DEBUG c.Test_SemaphoreApplication - borrow conn MyConn{connName='conn---0'}
+      * 16:21:09.851 [Thread-0] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---1'}
+      * 16:21:09.852 [Thread-2] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---2'}
+      * 16:21:14.852 [Thread-4] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---1'}
+      * 16:21:14.852 [Thread-3] DEBUG c.Test_SemaphoreApplication - free conn MyConn{connName='conn---0'}
+      */
+     @Test
+     public void test2() {
+         Pool connPool = new Pool(3);
+         List<Thread> threadList = new ArrayList<>();
+         for (int i = 0; i < 5; i++) {
+             threadList.add(new Thread(() -> {
+                 Connection connection = connPool.borrow_semaphore();
+                 log.debug("borrow conn {}", connection);
+                 //5秒后释放连接
+                 try {
+                     Thread.sleep(5000);
+                 } catch (InterruptedException e) {
+                     e.printStackTrace();
+                 }
+                 connPool.free_semaphore(connection);
+                 log.debug("free conn {}", connection);
+             }));
+         }
+ 
+         threadList.forEach((s) -> s.start());
+         threadList.forEach((s) -> {
+             try {
+                 s.join();
+             } catch (InterruptedException e) {
+                 e.printStackTrace();
+             }
+         });
+     }
+ 
+ 
+ }
+ ```
+
+
+
+### 6.3 Semaphore原理
+
+#### 6.3.1 加锁解锁原理
+
+Semaphore 有点像一个停车场，permits 就好像停车位数量，当线程获得了 permits 就像是获得了停车位，然后
+停车场显示空余车位减一
+刚开始，permits（state）为 3，这时 5 个线程来获取资源 .
+
+![image-20211004162439141](images/image-20211004162439141.png)
+
+假设其中 Thread-1，Thread-2，Thread-4 cas 竞争成功，而 Thread-0 和 Thread-3 竞争失败，进入 AQS 队列
+park 阻塞  
+
+![image-20211004162536567](images/image-20211004162536567.png)
+
+这时 Thread-4 释放了 permits，状态如下  
+
+![image-20211004162551289](images/image-20211004162551289.png)
+
+接下来 Thread-0 竞争成功，permits 再次设置为 0，设置自己为 head 节点，断开原来的 head 节点，unpark 接
+下来的 Thread-3 节点，但由于 permits 是 0，因此 Thread-3 在尝试不成功后再次进入 park 状态  
+
+![image-20211004162610941](images/image-20211004162610941.png)
+
+#### 6.3.2 源码分析
+
+##### (1)acqire
+
+```java
+static final class NonfairSync extends Sync {
+    private static final long serialVersionUID = -2694183684443567898L;
+    
+    NonfairSync(int permits) {
+        // permits 即 state
+        super(permits);
+    }
+    
+    // Semaphore 方法, 方便阅读, 放在此处
+    public void acquire() throws InterruptedException {
+    	sync.acquireSharedInterruptibly(1);
+    }
+    
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+    public final void acquireSharedInterruptibly(int arg)
+    	throws InterruptedException {
+    	if (Thread.interrupted())
+    		throw new InterruptedException();
+    	if (tryAcquireShared(arg) < 0)
+    		doAcquireSharedInterruptibly(arg);
+    }
+    
+    // 尝试获得共享锁
+    protected int tryAcquireShared(int acquires) {
+    	return nonfairTryAcquireShared(acquires);
+    }
+    
+	// Sync 继承过来的方法, 方便阅读, 放在此处
+	final int nonfairTryAcquireShared(int acquires) {
+		for (;;) {
+			int available = getState();
+			int remaining = available - acquires;
+            if (
+                // 如果许可已经用完, 返回负数, 表示获取失败, 进入 doAcquireSharedInterruptibly
+                remaining < 0 ||
+                // 如果 cas 重试成功, 返回正数, 表示获取成功
+                compareAndSetState(available, remaining)
+                ) {
+					return remaining;
+			}
+		}
+	}
+    
+   // AQS 继承过来的方法, 方便阅读, 放在此处
+	private void doAcquireSharedInterruptibly(int arg) throws InterruptedException {
+		final Node node = addWaiter(Node.SHARED);
+		boolean failed = true;
+		try {
+            for (;;) {
+            	final Node p = node.predecessor();
+				if (p == head) { //当前节点存在前驱,是老二
+                    // 再次尝试获取许可
+                    int r = tryAcquireShared(arg);
+                    if (r >= 0) {
+                        // 成功后本线程出队（AQS）, 所在 Node设置为 head
+                        // 如果 head.waitStatus == Node.SIGNAL ==> 0 成功, 下一个节点 unpark
+                        // 如果 head.waitStatus == 0 ==> Node.PROPAGATE
+                        // r 表示可用资源数, 为 0 则不会继续传播
+						setHeadAndPropagate(node, r);
+                        p.next = null; // help GC
+                        failed = false;
+                    	return;
+                    }
+				}
+                // 不成功, 设置上一个节点 waitStatus = Node.SIGNAL, 下轮进入 park 阻塞
+                if (shouldParkAfterFailedAcquire(p, node) &&
+                	parkAndCheckInterrupt())
+						throw new InterruptedException();
+			}
+		} finally {
+			if (failed)
+			cancelAcquire(node);
+		}
+	}
+    
+```
+
+
+
+##### (2)release
+
+```java
+    // Semaphore 方法, 方便阅读, 放在此处
+    public void release() {
+    	sync.releaseShared(1);
+    }
+
+    // AQS 继承过来的方法, 方便阅读, 放在此处
+    public final boolean releaseShared(int arg) {
+    	if (tryReleaseShared(arg)) {
+    		doReleaseShared();
+    		return true;
+    	}
+    	return false;
+    }
+
+	// Sync 继承过来的方法, 方便阅读, 放在此处
+	protected final boolean tryReleaseShared(int releases) {
+		for (;;) {
+			int current = getState();
+			int next = current + releases;
+			if (next < current) // overflow
+				throw new Error("Maximum permit count exceeded");
+			if (compareAndSetState(current, next))
+				return true;
+		}
+	}
+
+}
+```
+
+
+
+##### (3)为什么要有 PROPAGATE 
+
+早期有 bug  
+
+- releseShared方法
+
+```java
+public final boolean releaseShared(int arg) {
+	if (tryReleaseShared(arg)) {
+		Node h = head;
+		if (h != null && h.waitStatus != 0)
+            unparkSuccessor(h);
+        return true;
+	}
+	return false;
+}
+```
+
+
+
+- doAcquireShared方法
+
+```java
+private void doAcquireShared(int arg) {
+	final Node node = addWaiter(Node.SHARED);
+	boolean failed = true;
+	try {
+		boolean interrupted = false;
+		for (;;) {
+			final Node p = node.predecessor();
+			if (p == head) {
+				int r = tryAcquireShared(arg);
+				if (r >= 0) {
+					// 这里会有空档
+					setHeadAndPropagate(node, r);
+					p.next = null; // help GC
+					if (interrupted)
+						selfInterrupt();
+					failed = false;
+					return;
+				}
+			}
+			if (shouldParkAfterFailedAcquire(p, node) &&
+				parkAndCheckInterrupt())
+    			interrupted = true;
+		}
+	} finally {
+        if (failed)
+        cancelAcquire(node);
+	}
+}
+```
+
+
+
+- setHeadAndPropagate 方法  
+
+```java
+private void setHeadAndPropagate(Node node, int propagate) {
+    setHead(node);
+    // 有空闲资源
+    if (propagate > 0 && node.waitStatus != 0) {
+        Node s = node.next;
+        // 下一个
+        if (s == null || s.isShared())
+			unparkSuccessor(node);
+	}
+}
+```
+
+假设存在某次循环中队列里排队的结点情况为 head(-1)->t1(-1)->t2(-1)
+假设存在将要信号量释放的 T3 和 T4，释放顺序为先 T3 后 T4  
 
 
 
